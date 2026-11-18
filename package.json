@@ -1,10 +1,17 @@
 {
   "name": "mr-moe-dee-downloader",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "private": true,
-  "description": "MR. MOE DEE DOWNLOADER - authorized media utility starter",
+  "description": "MR. MOE DEE DOWNLOADER - Pro Premium",
   "main": "server.js",
-  "scripts": {"start":"node server.js"},
-  "engines": {"node": ">=18"},
-  "dependencies": {"express":"^4.21.2"}
+  "scripts": {
+    "start": "node server.js",
+    "postinstall": "pip install --user yt-dlp || pip3 install --user yt-dlp || true"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "express": "^4.21.2"
+  }
 }
