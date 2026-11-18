@@ -8,7 +8,7 @@ app.use(express.json({ limit: '1mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
 
 app.get('/api/health', (req, res) => {
-    res.json({ status: true, name: "MR. MOE DEE DOWNLOADER - Pro" });
+    res.json({ status: true, name: "MR. MOE DEE DOWNLOADER - Pro Premium" });
 });
 
 app.post('/api/inspect', async (req, res) => {
@@ -32,9 +32,9 @@ app.post('/api/inspect', async (req, res) => {
             return res.status(400).json({ error: "YouTube သို့မဟုတ် TikTok လင့်ခ်များကိုသာ ပံ့ပိုးပါသည်။" });
         }
 
-        const command = `npx yt-dlp -j "${url}"`;
+        const command = `python3 -m yt_dlp -j "${url}" || yt-dlp -j "${url}" || npx yt-dlp -j "${url}"`;
         
-        exec(command, { timeout: 15000 }, (error, stdout, stderr) => {
+        exec(command, { timeout: 20000 }, (error, stdout, stderr) => {
             if (error) {
                 console.error("Extraction error:", error);
                 return res.status(500).json({ error: "ဗီဒီယိုအချက်အလက် ထုတ်ယူ၍မရပါ။ လင့်ခ်မှန်ကန်မှု ရှိမရှိ စစ်ဆေးပါ။" });
@@ -66,5 +66,5 @@ app.get('*', (req, res) => {
 });
 
 app.listen(PORT, () => {
-    console.log(`MR. MOE DEE DOWNLOADER running on port ${PORT}`);
+    console.log(`MR. MOE DEE DOWNLOADER Pro running on port ${PORT}`);
 });
