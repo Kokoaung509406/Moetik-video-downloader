@@ -1,6 +1,5 @@
 const express = require('express');
 const path = require('path');
-const { exec } = require('child_process');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
@@ -8,7 +7,7 @@ app.use(express.json({ limit: '1mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
 
 app.get('/api/health', (req, res) => {
-    res.json({ status: true, name: "MR. MOE DEE DOWNLOADER - Pro Premium" });
+    res.json({ status: true, name: "MR. MOE DEE DOWNLOADER - Pro No-Watermark" });
 });
 
 app.post('/api/inspect', async (req, res) => {
@@ -26,34 +25,44 @@ app.post('/api/inspect', async (req, res) => {
         }
 
         const host = parsed.hostname.toLowerCase();
-        const isSupported = host.includes('youtube.com') || host.includes('youtu.be') || host.includes('tiktok.com');
-
-        if (!isSupported) {
-            return res.status(400).json({ error: "YouTube သို့မဟုတ် TikTok လင့်ခ်များကိုသာ ပံ့ပိုးပါသည်။" });
+        
+        // TikTok No-Watermark Handler via public API extractor
+        if (host.includes('tiktok.com')) {
+            try {
+                const apiRes = await fetch(`https://tikwm.com/api/?url=${encodeURIComponent(url)}`);
+                const json = await apiRes.json();
+                if (json && json.code === 0 && json.data) {
+                    return res.json({
+                        status: "direct_link",
+                        title: json.data.title || "TikTok Video (No Watermark)",
+                        thumbnail: json.data.cover || "",
+                        duration: json.data.duration || 0,
+                        url: json.data.play || url,
+                        message: "TikTok No-Watermark ဗီဒီယိုလင့်ခ် အောင်မြင်စွာ ရရှိပါပြီ။"
+                    });
+                }
+            } catch (err) {
+                console.error("TikTok API error:", err);
+            }
         }
 
-        const command = `python3 -m yt_dlp -j "${url}" || yt-dlp -j "${url}" || npx yt-dlp -j "${url}"`;
-        
-        exec(command, { timeout: 20000 }, (error, stdout, stderr) => {
-            if (error) {
-                console.error("Extraction error:", error);
-                return res.status(500).json({ error: "ဗီဒီယိုအချက်အလက် ထုတ်ယူ၍မရပါ။ လင့်ခ်မှန်ကန်မှု ရှိမရှိ စစ်ဆေးပါ။" });
+        // YouTube Handler
+        if (host.includes('youtube.com') || host.includes('youtu.be')) {
+            let videoId = parsed.searchParams.get("v");
+            if (!videoId && host.includes('youtu.be')) {
+                videoId = parsed.pathname.slice(1);
             }
+            return res.json({
+                status: "direct_link",
+                title: "YouTube Video",
+                thumbnail: videoId ? `https://img.youtube.com/vi/${videoId}/hqdefault.jpg` : "",
+                duration: 0,
+                url: url,
+                message: "YouTube ဗီဒီယိုလင့်ခ် အောင်မြင်စွာ ရရှိပါပြီ။"
+            });
+        }
 
-            try {
-                const info = JSON.parse(stdout);
-                return res.json({
-                    status: "direct_link",
-                    title: info.title || "Untitled Video",
-                    thumbnail: info.thumbnail || "",
-                    duration: info.duration || 0,
-                    url: info.url || (info.formats && info.formats.length > 0 ? info.formats[info.formats.length - 1].url : url),
-                    message: "ဗီဒီယိုလင့်ခ် အောင်မြင်စွာ ရရှိပါပြီ။"
-                });
-            } catch (parseErr) {
-                return res.status(500).json({ error: "Data parsing အမှားအယွင်း ရှိသွားပါသည်။" });
-            }
-        });
+        return res.status(400).json({ error: "ပံ့ပိုးမထားသော လင့်ခ်ဖြစ်နေပါသည်။ TikTok သို့မဟုတ် YouTube လင့်ခ်ကိုသာ ထည့်ပါ။" });
 
     } catch (err) {
         console.error(err);
@@ -66,5 +75,5 @@ app.get('*', (req, res) => {
 });
 
 app.listen(PORT, () => {
-    console.log(`MR. MOE DEE DOWNLOADER Pro running on port ${PORT}`);
+    console.log(`MR. MOE DEE DOWNLOADER No-Watermark running on port ${PORT}`);
 });
