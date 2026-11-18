@@ -1,12 +1,11 @@
 {
   "name": "mr-moe-dee-downloader",
-  "version": "2.0.0",
+  "version": "4.0.0",
   "private": true,
-  "description": "MR. MOE DEE DOWNLOADER - Pro Premium",
+  "description": "MR. MOE DEE DOWNLOADER - No Watermark Pro",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js",
-    "postinstall": "pip install --user yt-dlp || pip3 install --user yt-dlp || true"
+    "start": "node server.js"
   },
   "engines": {
     "node": ">=18"
