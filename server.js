@@ -8,13 +8,13 @@ app.use(express.json({ limit: "1mb" }));
 app.use(express.static(path.join(__dirname, "public")));
 
 app.get("/api/health", (_req, res) => {
-  res.json({ status: true, name: "MR. MOE DEE DOWNLOADER - Pro Ultimate" });
+  res.json({ status: true, name: "MR. MOE DEE DOWNLOAD ENGINE" });
 });
 
 app.post("/api/inspect", async (req, res) => {
   try {
     const url = String(req.body?.url || "").trim();
-    const format = String(req.body?.format || "720").trim();
+    const mode = String(req.body?.mode || "hd").trim().toLowerCase();
 
     if (!url) {
       return res.status(400).json({ error: "ကျေးဇူးပြု၍ ဗီဒီယိုလင့်ခ် (URL) ထည့်သွင်းပါ။" });
@@ -33,35 +33,37 @@ app.post("/api/inspect", async (req, res) => {
 
     const host = parsed.hostname.toLowerCase();
 
+    // TikTok Direct Download Engine (No Watermark)
     if (host === "tiktok.com" || host.endsWith(".tiktok.com")) {
       const apiRes = await fetch(`https://tikwm.com/api/?url=${encodeURIComponent(url)}`);
       const json = await apiRes.json();
 
       if (json && json.code === 0 && json.data) {
-        let downloadUrl = json.data.play;
-        if (format === "mp3" || format === "wav") {
+        let downloadUrl = json.data.play; // HD No Watermark
+        let ext = "mp4";
+
+        if (mode === "audio") {
           downloadUrl = json.data.music || json.data.play;
-        } else if (format === "480") {
+          ext = "mp3";
+        } else if (mode === "sd") {
           downloadUrl = json.data.wmplay || json.data.play;
+          ext = "mp4";
         }
 
         return res.json({
-          status: "direct_link",
-          title: json.data.title || "TikTok Media",
-          thumbnail: json.data.cover || "",
-          url: downloadUrl
+          status: "ready",
+          title: json.data.title || "TikTok Download",
+          url: downloadUrl,
+          ext
         });
       }
 
-      return res.status(502).json({ error: "TikTok ဗီဒီယိုအချက်အလက် ထုတ်ယူ၍မရပါ။" });
+      return res.status(502).json({ error: "TikTok လင့်ခ်ကို ဖတ်၍မရပါ။" });
     }
 
+    // YouTube Direct Download Engine
     if (host === "youtube.com" || host.endsWith(".youtube.com") || host === "youtu.be") {
-      let videoId = parsed.searchParams.get("v");
-      if (!videoId && host === "youtu.be") {
-        videoId = parsed.pathname.replace(/^\/+/, "").split("/")[0];
-      }
-
+      const isAudio = mode === "audio";
       const cobaltRes = await fetch("https://api.cobalt.tools/api/json", {
         method: "POST",
         headers: {
@@ -70,9 +72,9 @@ app.post("/api/inspect", async (req, res) => {
         },
         body: JSON.stringify({
           url,
-          downloadMode: format === "mp3" || format === "wav" ? "audio" : "video",
-          audioFormat: format === "wav" ? "wav" : "mp3",
-          videoQuality: format === "480" ? "480" : "720"
+          downloadMode: isAudio ? "audio" : "video",
+          audioFormat: "mp3",
+          videoQuality: mode === "sd" ? "480" : "720"
         })
       });
 
@@ -84,15 +86,15 @@ app.post("/api/inspect", async (req, res) => {
 
       if (directUrl) {
         return res.json({
-          status: "direct_link",
-          title: "YouTube Media",
-          thumbnail: videoId ? `https://img.youtube.com/vi/${videoId}/hqdefault.jpg` : "",
-          url: directUrl
+          status: "ready",
+          title: "YouTube Download",
+          url: directUrl,
+          ext: isAudio ? "mp3" : "mp4"
         });
       }
 
       return res.status(502).json({
-        error: cobaltData?.text || "YouTube direct link ထုတ်ယူ၍မရသေးပါ။"
+        error: cobaltData?.text || "YouTube download link ထုတ်ယူ၍မရပါ။"
       });
     }
 
@@ -103,10 +105,55 @@ app.post("/api/inspect", async (req, res) => {
   }
 });
 
+// Direct File Stream Proxy (Forces Download Without Media Player)
+app.get("/api/download", async (req, res) => {
+  try {
+    const fileUrl = String(req.query?.url || "").trim();
+    const ext = String(req.query?.ext || "mp4").toLowerCase() === "mp3" ? "mp3" : "mp4";
+
+    if (!fileUrl) {
+      return res.status(400).send("Missing URL");
+    }
+
+    let parsed;
+    try {
+      parsed = new URL(fileUrl);
+    } catch {
+      return res.status(400).send("Invalid URL");
+    }
+
+    if (!["http:", "https:"].includes(parsed.protocol)) {
+      return res.status(400).send("Invalid protocol");
+    }
+
+    const upstream = await fetch(parsed.toString());
+    if (!upstream.ok || !upstream.body) {
+      return res.status(502).send("Upstream download failed");
+    }
+
+    const mimeType = ext === "mp3" ? "audio/mpeg" : "video/mp4";
+    res.setHeader("Content-Type", mimeType);
+    res.setHeader("Content-Disposition", `attachment; filename="moe-dee-download.${ext}"`);
+
+    const reader = upstream.body.getReader();
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      res.write(Buffer.from(value));
+    }
+    res.end();
+  } catch (err) {
+    console.error("Download error:", err);
+    if (!res.headersSent) {
+      res.status(500).send("Download error");
+    }
+  }
+});
+
 app.use((_req, res) => {
   res.sendFile(path.join(__dirname, "public", "index.html"));
 });
 
 app.listen(PORT, () => {
-  console.log(`MR. MOE DEE DOWNLOADER running on port ${PORT}`);
+  console.log(`MR. MOE DEE DOWNLOAD ENGINE running on port ${PORT}`);
 });
