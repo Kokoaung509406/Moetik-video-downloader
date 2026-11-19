@@ -1,5 +1,14 @@
 const express = require("express");
 const path = require("path");
+const fs = require("fs");
+const os = require("os");
+const crypto = require("crypto");
+const ffmpeg = require("fluent-ffmpeg");
+const ffmpegPath = require("ffmpeg-static");
+
+if (ffmpegPath) {
+  ffmpeg.setFfmpegPath(ffmpegPath);
+}
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -8,13 +17,19 @@ app.use(express.json({ limit: "1mb" }));
 app.use(express.static(path.join(__dirname, "public")));
 
 app.get("/api/health", (_req, res) => {
-  res.json({ status: true, name: "MR. MOE DEE DOWNLOAD ENGINE" });
+  res.json({ status: true, name: "MR. MOE DEE DOWNLOAD ENGINE + CONVERTER" });
 });
 
 app.post("/api/inspect", async (req, res) => {
   try {
     const url = String(req.body?.url || "").trim();
-    const mode = String(req.body?.mode || "hd").trim().toLowerCase();
+    const rawMode = String(req.body?.mode || "hd").trim().toLowerCase();
+
+    let mode = "hd";
+    if (rawMode === "sd") mode = "sd";
+    else if (rawMode === "mp3") mode = "mp3";
+    else if (rawMode === "wav") mode = "wav";
+    else if (rawMode === "audio") mode = "mp3";
 
     if (!url) {
       return res.status(400).json({ error: "ကျေးဇူးပြု၍ ဗီဒီယိုလင့်ခ် (URL) ထည့်သွင်းပါ။" });
@@ -32,38 +47,32 @@ app.post("/api/inspect", async (req, res) => {
     }
 
     const host = parsed.hostname.toLowerCase();
+    const isAudioMode = mode === "mp3" || mode === "wav";
+    const targetExt = mode === "wav" ? "wav" : mode === "mp3" ? "mp3" : "mp4";
 
-    // TikTok Direct Download Engine (No Watermark)
     if (host === "tiktok.com" || host.endsWith(".tiktok.com")) {
       const apiRes = await fetch(`https://tikwm.com/api/?url=${encodeURIComponent(url)}`);
       const json = await apiRes.json();
 
       if (json && json.code === 0 && json.data) {
-        let downloadUrl = json.data.play; // HD No Watermark
-        let ext = "mp4";
-
-        if (mode === "audio") {
-          downloadUrl = json.data.music || json.data.play;
-          ext = "mp3";
-        } else if (mode === "sd") {
-          downloadUrl = json.data.wmplay || json.data.play;
-          ext = "mp4";
-        }
+        const mediaUrl = isAudioMode
+          ? json.data.music || json.data.music_info?.play || json.data.play
+          : mode === "sd"
+            ? json.data.wmplay || json.data.play
+            : json.data.play;
 
         return res.json({
           status: "ready",
-          title: json.data.title || "TikTok Download",
-          url: downloadUrl,
-          ext
+          title: json.data.title || "TikTok Media",
+          url: mediaUrl,
+          ext: targetExt
         });
       }
 
       return res.status(502).json({ error: "TikTok လင့်ခ်ကို ဖတ်၍မရပါ။" });
     }
 
-    // YouTube Direct Download Engine
     if (host === "youtube.com" || host.endsWith(".youtube.com") || host === "youtu.be") {
-      const isAudio = mode === "audio";
       const cobaltRes = await fetch("https://api.cobalt.tools/api/json", {
         method: "POST",
         headers: {
@@ -72,8 +81,8 @@ app.post("/api/inspect", async (req, res) => {
         },
         body: JSON.stringify({
           url,
-          downloadMode: isAudio ? "audio" : "video",
-          audioFormat: "mp3",
+          downloadMode: isAudioMode ? "audio" : "video",
+          audioFormat: mode === "wav" ? "wav" : "mp3",
           videoQuality: mode === "sd" ? "480" : "720"
         })
       });
@@ -87,9 +96,9 @@ app.post("/api/inspect", async (req, res) => {
       if (directUrl) {
         return res.json({
           status: "ready",
-          title: "YouTube Download",
+          title: "YouTube Media",
           url: directUrl,
-          ext: isAudio ? "mp3" : "mp4"
+          ext: targetExt
         });
       }
 
@@ -105,47 +114,92 @@ app.post("/api/inspect", async (req, res) => {
   }
 });
 
-// Direct File Stream Proxy (Forces Download Without Media Player)
+function cleanupFiles(...paths) {
+  for (const p of paths) {
+    if (p && fs.existsSync(p)) {
+      fs.unlink(p, () => {});
+    }
+  }
+}
+
 app.get("/api/download", async (req, res) => {
+  const fileUrl = String(req.query?.url || "").trim();
+  const rawExt = String(req.query?.ext || "mp4").trim().toLowerCase();
+  const ext = rawExt === "mp3" ? "mp3" : rawExt === "wav" ? "wav" : "mp4";
+
+  if (!fileUrl) {
+    return res.status(400).send("Missing URL");
+  }
+
+  let parsed;
   try {
-    const fileUrl = String(req.query?.url || "").trim();
-    const ext = String(req.query?.ext || "mp4").toLowerCase() === "mp3" ? "mp3" : "mp4";
+    parsed = new URL(fileUrl);
+  } catch {
+    return res.status(400).send("Invalid URL");
+  }
 
-    if (!fileUrl) {
-      return res.status(400).send("Missing URL");
-    }
+  if (!["http:", "https:"].includes(parsed.protocol)) {
+    return res.status(400).send("Invalid protocol");
+  }
 
-    let parsed;
-    try {
-      parsed = new URL(fileUrl);
-    } catch {
-      return res.status(400).send("Invalid URL");
-    }
+  const id = crypto.randomBytes(8).toString("hex");
+  const tempInput = path.join(os.tmpdir(), `in-${id}`);
+  const tempOutput = path.join(os.tmpdir(), `out-${id}.${ext}`);
 
-    if (!["http:", "https:"].includes(parsed.protocol)) {
-      return res.status(400).send("Invalid protocol");
-    }
-
+  try {
     const upstream = await fetch(parsed.toString());
     if (!upstream.ok || !upstream.body) {
       return res.status(502).send("Upstream download failed");
     }
 
-    const mimeType = ext === "mp3" ? "audio/mpeg" : "video/mp4";
-    res.setHeader("Content-Type", mimeType);
-    res.setHeader("Content-Disposition", `attachment; filename="moe-dee-download.${ext}"`);
-
-    const reader = upstream.body.getReader();
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      res.write(Buffer.from(value));
+    // Video direct stream without re-encoding
+    if (ext === "mp4") {
+      res.setHeader("Content-Type", "video/mp4");
+      res.setHeader("Content-Disposition", `attachment; filename="moe-dee-video.mp4"`);
+      const reader = upstream.body.getReader();
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        res.write(Buffer.from(value));
+      }
+      return res.end();
     }
-    res.end();
+
+    // Save source media temporarily and convert via ffmpeg to real MP3 or WAV
+    const arrayBuffer = await upstream.arrayBuffer();
+    fs.writeFileSync(tempInput, Buffer.from(arrayBuffer));
+
+    await new Promise((resolve, reject) => {
+      let cmd = ffmpeg(tempInput).noVideo();
+      if (ext === "mp3") {
+        cmd = cmd.audioCodec("libmp3lame").audioBitrate("192k").format("mp3");
+      } else if (ext === "wav") {
+        cmd = cmd.audioCodec("pcm_s16le").audioFrequency(44100).audioChannels(2).format("wav");
+      }
+      cmd
+        .save(tempOutput)
+        .on("end", resolve)
+        .on("error", reject);
+    });
+
+    const mimeType = ext === "wav" ? "audio/wav" : "audio/mpeg";
+    const fileName = `moe-dee-audio.${ext}`;
+
+    res.setHeader("Content-Type", mimeType);
+    res.setHeader("Content-Disposition", `attachment; filename="${fileName}"`);
+
+    const stream = fs.createReadStream(tempOutput);
+    stream.on("close", () => cleanupFiles(tempInput, tempOutput));
+    stream.on("error", () => {
+      cleanupFiles(tempInput, tempOutput);
+      if (!res.headersSent) res.status(500).send("Stream error");
+    });
+    stream.pipe(res);
   } catch (err) {
-    console.error("Download error:", err);
+    console.error("Download / convert error:", err);
+    cleanupFiles(tempInput, tempOutput);
     if (!res.headersSent) {
-      res.status(500).send("Download error");
+      res.status(500).send("Download or conversion failed");
     }
   }
 });
@@ -155,5 +209,5 @@ app.use((_req, res) => {
 });
 
 app.listen(PORT, () => {
-  console.log(`MR. MOE DEE DOWNLOAD ENGINE running on port ${PORT}`);
+  console.log(`MR. MOE DEE DOWNLOAD ENGINE + CONVERTER running on port ${PORT}`);
 });
